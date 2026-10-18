@@ -25,35 +25,19 @@ Python is not required.
 
 ## CPU temperature
 
-Windows does not expose AMD CPU temperature to normal apps. GPU temperature works on its own because the NVIDIA driver is always running. CPU temperature needs LibreHardwareMonitor.
+GPU temperature works immediately. The NVIDIA driver is already running.
 
-1. Open the releases page:
+CPU temperature is included. `LightOverlay.exe` carries LibreHardwareMonitor and starts it in the background. You do not download or configure that program yourself.
 
-https://github.com/LibreHardwareMonitor/LibreHardwareMonitor/releases/latest
+The first time Windows opens it, accept the administrator prompt. That lets the CPU sensor load. After that, Light Overlay starts the monitor on its own. If you quit LibreHardwareMonitor completely, CPU temperature goes back to `N/A` until you open Light Overlay again.
 
-2. Download the file named:
-
-`LibreHardwareMonitor.zip`
-
-3. Do not download the file with `NET.10` in its name. That build requires .NET 10, and Windows will keep saying .NET is missing even after you install a different version.
-
-4. Extract the zip. The regular build runs on .NET Framework 4.8, which is already included with Windows 10 and Windows 11.
-
-5. The first time, right-click `LibreHardwareMonitor.exe` and choose **Run as administrator**.
-
-6. In the menu, open **Options**, then **Remote Web Server**, and turn **Run** on.
-
-Leave the port at `8085`.
-
-7. Keep LibreHardwareMonitor running in the background. You can minimize it. If you quit it completely, CPU temperature in Light Overlay goes back to `N/A`.
-
-If `LibreHardwareMonitor.exe` sits next to `LightOverlay.exe`, or inside a `LibreHardwareMonitor` folder next to the app, Light Overlay will try to start it when the temperature is unavailable.
+LibreHardwareMonitor is included under the Mozilla Public License 2.0. Its project page is https://github.com/LibreHardwareMonitor/LibreHardwareMonitor.
 
 ## Build from source
 
 ```powershell
-python -m pip install -r requirements.txt pyinstaller
-python -m PyInstaller --noconfirm --clean --onefile --windowed --name LightOverlay overlay.py
+python -m pip install -r requirements.txt pyinstaller pillow
+powershell -ExecutionPolicy Bypass -File .\build.ps1
 ```
 
 The executable is created at:

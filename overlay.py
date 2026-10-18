@@ -6,7 +6,7 @@ from a background thread so the window stays responsive.
 
 Build a windowed executable from this folder:
 
-    python -m PyInstaller --noconfirm --clean --onefile --windowed --name LightOverlay overlay.py
+    powershell -ExecutionPolicy Bypass -File .\build.ps1
 """
 
 from __future__ import annotations
@@ -16,6 +16,7 @@ import json
 import math
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -179,10 +180,82 @@ class Snapshot:
 
 _READING_NUMBER = re.compile(r"-?\d+(?:\.\d+)?")
 _LHM_URL = "http://127.0.0.1:8085/data.json"
+_LHM_LAUNCH_LOCK = threading.Lock()
+_LHM_NEXT_LAUNCH = 0.0
+_LHM_ASKED_ADMIN = False
+
+
+_LHM_BUNDLE_VERSION = "0.9.6"
+_LHM_CONFIG = """<?xml version="1.0" encoding="utf-8"?>
+<configuration>
+  <appSettings>
+    <add key="runWebServerMenuItem" value="true" />
+    <add key="startMinMenuItem" value="true" />
+    <add key="minTrayMenuItem" value="true" />
+    <add key="minCloseMenuItem" value="true" />
+    <add key="listenerIp" value="127.0.0.1" />
+    <add key="listenerPort" value="8085" />
+  </appSettings>
+</configuration>
+"""
+
+
+def _bundled_lhm() -> Optional[Path]:
+    """Folder shipped inside the executable."""
+    bases = []
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            bases.append(Path(meipass))
+    bases.append(Path(__file__).resolve().parent / "vendor")
+    for base in bases:
+        candidate = base / "LibreHardwareMonitor"
+        if (candidate / "LibreHardwareMonitor.exe").is_file():
+            return candidate
+    return None
+
+
+def _lhm_home() -> Path:
+    root = os.environ.get("LOCALAPPDATA") or str(Path.home())
+    return Path(root) / "LightOverlay" / "LibreHardwareMonitor"
+
+
+def _install_bundled_lhm() -> Optional[Path]:
+    """Copy the bundled monitor into AppData so it can write its own settings."""
+    source = _bundled_lhm()
+    if source is None:
+        return None
+    target = _lhm_home()
+    exe = target / "LibreHardwareMonitor.exe"
+    marker = target / ".bundle-version"
+    current = ""
+    if marker.is_file():
+        try:
+            current = marker.read_text(encoding="utf-8").strip()
+        except OSError:
+            current = ""
+    if not exe.is_file() or current != _LHM_BUNDLE_VERSION:
+        target.mkdir(parents=True, exist_ok=True)
+        for item in source.iterdir():
+            if item.name in {"LibreHardwareMonitor.config", ".bundle-version"}:
+                continue
+            dest = target / item.name
+            if item.is_dir():
+                shutil.copytree(item, dest, dirs_exist_ok=True)
+            else:
+                shutil.copy2(item, dest)
+        config = target / "LibreHardwareMonitor.config"
+        if not config.is_file():
+            config.write_text(_LHM_CONFIG, encoding="utf-8")
+        marker.write_text(_LHM_BUNDLE_VERSION, encoding="utf-8")
+    return exe if exe.is_file() else None
 
 
 def _find_lhm() -> Optional[Path]:
-    """Look beside the app first, then the local install used on this PC."""
+    """Prefer the copy shipped with the app, then a monitor beside the exe."""
+    installed = _install_bundled_lhm()
+    if installed is not None:
+        return installed
     roots = []
     if getattr(sys, "frozen", False):
         roots.append(Path(sys.executable).resolve().parent)
@@ -199,6 +272,17 @@ def _find_lhm() -> Optional[Path]:
     return None
 
 
+def _icon_file() -> Optional[Path]:
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", "")
+        if meipass:
+            bundled = Path(meipass) / "lightoverlay.ico"
+            if bundled.is_file():
+                return bundled
+    local = Path(__file__).resolve().parent / "assets" / "lightoverlay.ico"
+    return local if local.is_file() else None
+
+
 class CpuTemperature:
     """Best-effort CPU temperature.
 
@@ -211,7 +295,6 @@ class CpuTemperature:
         self._readers: List[Callable[[], Optional[float]]] = []
         self._discovered = False
         self._retry_at = 0.0
-        self._next_launch = 0.0
 
     def read(self) -> Optional[float]:
         now = time.monotonic()
@@ -259,30 +342,45 @@ class CpuTemperature:
                 self._readers.append(lambda bound=service: self._from_hardware_monitor(bound))
 
     def _ensure_running(self) -> None:
-        """Start the sensor app in the background when its local page is down."""
+        """Start the bundled sensor app when its local page is down."""
+        global _LHM_NEXT_LAUNCH, _LHM_ASKED_ADMIN
         now = time.monotonic()
-        exe = _find_lhm()
-        if now < self._next_launch or exe is None:
-            return
-        self._next_launch = now + 15.0
-        if psutil is not None:
+        with _LHM_LAUNCH_LOCK:
+            if now < _LHM_NEXT_LAUNCH:
+                return
+            exe = _find_lhm()
+            if exe is None:
+                return
+            _LHM_NEXT_LAUNCH = now + 15.0
+            if psutil is not None:
+                try:
+                    for proc in psutil.process_iter(["name"]):
+                        if (proc.info.get("name") or "").lower() == "librehardwaremonitor.exe":
+                            return
+                except Exception:
+                    return
+            ready_flag = exe.parent / ".sensor-ready"
+            if os.name == "nt" and not _LHM_ASKED_ADMIN and not ready_flag.is_file():
+                _LHM_ASKED_ADMIN = True
+                try:
+                    started = ctypes.windll.shell32.ShellExecuteW(
+                        None, "runas", str(exe), "", str(exe.parent), 7
+                    )
+                except Exception:
+                    started = 0
+                if int(started) > 32:
+                    return
+            startup = subprocess.STARTUPINFO()
+            startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+            startup.wShowWindow = 7  # minimized, without stealing focus
             try:
-                for proc in psutil.process_iter(["name"]):
-                    if (proc.info.get("name") or "").lower() == "librehardwaremonitor.exe":
-                        return
+                subprocess.Popen(
+                    [str(exe)],
+                    cwd=str(exe.parent),
+                    startupinfo=startup,
+                )
             except Exception:
                 return
-        startup = subprocess.STARTUPINFO()
-        startup.dwFlags |= subprocess.STARTF_USESHOWWINDOW
-        startup.wShowWindow = 7  # minimized, without stealing focus
-        try:
-            subprocess.Popen(
-                [str(exe)],
-                cwd=str(exe.parent),
-                startupinfo=startup,
-            )
-        except Exception:
-            return
 
     def _from_lhm_http(self) -> Optional[float]:
         try:
@@ -309,7 +407,15 @@ class CpuTemperature:
                 walk(child, blob)
 
         walk(payload, "")
-        return max(found) if found else None
+        if not found:
+            return None
+        try:
+            located = _find_lhm()
+            if located is not None:
+                (located.parent / ".sensor-ready").write_text("ok", encoding="utf-8")
+        except OSError:
+            pass
+        return max(found)
 
     @staticmethod
     def _from_psutil() -> Optional[float]:
@@ -680,6 +786,12 @@ class OverlayApp:
 
         self.root = tk.Tk()
         self.root.title("Light Overlay")
+        icon = _icon_file()
+        if icon is not None:
+            try:
+                self.root.iconbitmap(default=str(icon))
+            except tk.TclError:
+                pass
         self.root.overrideredirect(True)
         self.root.attributes("-topmost", True)
         self.root.attributes("-alpha", 0.0)
@@ -966,6 +1078,10 @@ def main() -> None:
         )
         root.destroy()
         raise SystemExit(1)
+    try:
+        CpuTemperature()._ensure_running()
+    except Exception:
+        pass
     OverlayApp().run()
 
 
