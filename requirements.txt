@@ -1,0 +1,7 @@
+psutil>=5.9.0
+GPUtil>=1.4.0
+
+# Optional. Enables CPU temperature on Windows when LibreHardwareMonitor,
+# OpenHardwareMonitor, or an ACPI thermal zone is available:
+# wmi>=1.5.1
+# pywin32>=306
