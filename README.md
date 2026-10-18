@@ -11,7 +11,8 @@ A small, always-on-top window for live system stats:
 Drag the window with the left mouse button. Right-click to show or hide any reading, or to exit.
 
 
-<img width="1919" height="1032" alt="image" src="https://github.com/user-attachments/assets/902140ac-2fc1-4bf0-88d9-396fd075fd17" />
+<img width="1919" height="1032" alt="Screenshot 2026-10-18 125528" src="https://github.com/user-attachments/assets/2b765493-6411-49c0-bd18-3b461ab7151c" />
+
 
 
 ## Run
