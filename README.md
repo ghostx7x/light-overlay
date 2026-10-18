@@ -10,6 +10,9 @@ A small, always-on-top window for live system stats:
 
 Drag the window with the left mouse button. Right-click to show or hide any reading, or to exit.
 
+
+<img width="1919" height="1079" alt="image" src="https://github.com/user-attachments/assets/936b8702-953d-4919-bd6b-ad8127f6ff0a" />
+
 ## Run
 
 Launch:
